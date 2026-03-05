@@ -1,9 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { SandpackCodeEditor, SandpackPreview, SandpackProvider } from '@codesandbox/sandpack-react';
+import React, { useEffect, useRef, useState } from 'react';
 
-// FastAPI schemas/fhir.py 와 1:1 매핑
 interface FhirQuestionnaireRequest {
   questionnaire: Record<string, unknown>;
   component_name: string;
@@ -12,30 +10,25 @@ interface FhirQuestionnaireRequest {
 
 interface FhirComponentResponse {
   component_code: string;
+  preview_html: string;
   component_name: string;
   fhir_item_count: number;
   warnings: string[];
 }
 
 const Page = () => {
-  // textarea에 입력된 FHIR JSON 문자열
   const [schema, setSchema] = useState<string>('');
-  // 컴포넌트 이름 입력
   const [componentName, setComponentName] = useState<string>('PatientForm');
-  // Claude API 응답 결과
   const [result, setResult] = useState<FhirComponentResponse | null>(null);
-  // 로딩 상태
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  // 에러 메시지
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const handleGenerate = async (): Promise<void> => {
-    // 상태 초기화
     setIsLoading(true);
     setErrorMessage('');
     setResult(null);
 
-    // 1. textarea 문자열 → JSON 파싱
     let parsedQuestionnaire: Record<string, unknown> = {};
     let isParseSuccess: boolean = true;
 
@@ -51,14 +44,12 @@ const Page = () => {
       return;
     }
 
-    // 2. 요청 객체 구성
     const request: FhirQuestionnaireRequest = {
       questionnaire: parsedQuestionnaire,
       component_name: componentName,
       style_lib: 'tailwind',
     };
 
-    // 3. FastAPI 호출
     let isFetchSuccess: boolean = true;
 
     try {
@@ -83,6 +74,36 @@ const Page = () => {
     }
 
     setIsLoading(false);
+  };
+
+  // result 변경 시 preview_html을 blob URL로 iframe에 주입
+  useEffect(() => {
+    if (!result || !iframeRef.current) return;
+
+    const blob: Blob = new Blob([result.preview_html], { type: 'text/html' });
+    const blobUrl: string = URL.createObjectURL(blob);
+
+    iframeRef.current.src = blobUrl;
+
+    // 메모리 누수 방지
+    return () => {
+      URL.revokeObjectURL(blobUrl);
+    };
+  }, [result]);
+
+  // TSX 파일 다운로드
+  const handleDownload = (): void => {
+    if (!result) return;
+
+    const blob: Blob = new Blob([result.component_code], { type: 'text/plain' });
+    const url: string = URL.createObjectURL(blob);
+    const anchor: HTMLAnchorElement = document.createElement('a');
+
+    anchor.href = url;
+    anchor.download = `${result.component_name}.tsx`;
+    anchor.click();
+
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -134,14 +155,23 @@ const Page = () => {
           </button>
         </div>
 
-        {/* 오른쪽: 생성된 코드 출력 */}
+        {/* 오른쪽: 미리보기 + 다운로드 */}
         <div className="basis-1/2 flex flex-col gap-3">
           {result ? (
             <>
-              {/* 메타 정보 */}
-              <div className="flex gap-3 text-sm text-white">
-                <span>컴포넌트: {result.component_name}</span>
-                <span>FHIR items: {result.fhir_item_count}</span>
+              {/* 메타 정보 + 다운로드 버튼 */}
+              <div className="flex items-center justify-between">
+                <div className="flex gap-3 text-sm text-white">
+                  <span>컴포넌트: {result.component_name}</span>
+                  <span>FHIR items: {result.fhir_item_count}</span>
+                </div>
+                <button
+                  onClick={handleDownload}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-500
+                             rounded-lg text-sm text-white font-medium transition-colors"
+                >
+                  ⬇️ {result.component_name}.tsx 다운로드
+                </button>
               </div>
 
               {/* warnings */}
@@ -153,43 +183,14 @@ const Page = () => {
                 </div>
               )}
 
-              {/* Sandpack: 코드 에디터 + 미리보기 */}
-              <SandpackProvider
-                template="react-ts"
-                files={{
-                  // 루트 경로로 통일
-                  '/PatientForm.tsx': result.component_code,
-                  '/App.tsx': `
-import ${result.component_name} from './PatientForm';
-
-export default function App() {
-  return (
-    <div className="p-4">
-      <${result.component_name} />
-    </div>
-  );
-}
-    `.trim(),
-                }}
-                options={{
-                  externalResources: ['https://cdn.tailwindcss.com'],
-                }}
-                theme="dark"
-              >
-                {/* 탭: 코드 보기 / 미리보기 전환 */}
-                <div className="flex flex-col gap-2 flex-1">
-                  <SandpackCodeEditor
-                    style={{ height: '300px', borderRadius: '8px' }}
-                    showTabs
-                    showLineNumbers
-                    readOnly
-                  />
-                  <SandpackPreview
-                    style={{ height: '300px', borderRadius: '8px' }}
-                    showNavigator={false}
-                  />
-                </div>
-              </SandpackProvider>
+              {/* iframe 미리보기 — preview_html blob URL 주입 */}
+              <iframe
+                ref={iframeRef}
+                className="w-full bg-white rounded-lg"
+                style={{ height: '500px', border: 'none' }}
+                sandbox="allow-scripts"
+                title="컴포넌트 미리보기"
+              />
             </>
           ) : (
             <div className="flex-1 min-h-96 bg-gray-900 rounded-lg flex items-center justify-center">
