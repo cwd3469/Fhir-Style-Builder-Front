@@ -1,0 +1,9 @@
+services:
+  # Next.js 프론트엔드 컨테이너
+  frontend:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    restart: always
